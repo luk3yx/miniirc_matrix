@@ -12,7 +12,7 @@ import functools, html.parser, itertools, json, math, re, threading, time, uuid
 import miniirc, requests, traceback  # type: ignore
 
 
-ver = (0, 0, 1)
+ver = (0, 0, 2)
 __version__ = '.'.join(map(str, ver))
 
 
@@ -432,7 +432,7 @@ class Matrix(miniirc.IRC):
             }
             self.__start_time = math.floor(time.time()) * 1000
             self.debug('Starting main loop (Matrix)')
-            threading.Thread(target=self._main).start()
+            self._start_main_loop()
 
     def disconnect(self) -> None:
         self.connected = False

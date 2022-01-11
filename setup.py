@@ -5,7 +5,7 @@ from setuptools import setup
 
 setup(
     name='miniirc_matrix',
-    version='0.0.1',
+    version='0.0.2',
     py_modules=['miniirc_matrix'],
     author='luk3yx',
     description='A Matrix wrapper for miniirc.',
@@ -15,7 +15,7 @@ setup(
     long_description_content_type='text/markdown',
     install_requires=[
         'requests>=2.22.0,<3',
-        'miniirc>=1.7.0,<2',
+        'miniirc>=1.8.0,<2',
     ],
     python_requires='>=3.8',
 
