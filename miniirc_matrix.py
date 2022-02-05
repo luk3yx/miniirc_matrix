@@ -99,9 +99,9 @@ class _TagManager:
     def set_colours(self, fg: Optional[str] = None,
                     bg: Optional[str] = None) -> None:
         if fg is not None:
-            self.fg = fg
+            self.fg = fg or None
         if bg is not None:
-            self.bg = bg
+            self.bg = bg or None
 
         if not self.fg and not self.bg:
             if 'span' in self.tags:
@@ -510,7 +510,7 @@ class Matrix(miniirc.IRC):
     def quote(self, *msg: str, force: Optional[bool] = None,
               tags: Optional[dict[Any, Any]] = None) -> None:
         cmd, _, tags2, args = miniirc.ircv3_message_parser(' '.join(msg))
-        if args and args[-1].startswith(':'):
+        if miniirc.ver[0] < 2 and args and args[-1].startswith(':'):
             args[-1] = args[-1][1:]
         self.send(cmd, *args, force=force, tags=tags or tags2)
 
