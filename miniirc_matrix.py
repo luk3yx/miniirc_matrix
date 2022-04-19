@@ -12,7 +12,7 @@ import functools, html.parser, itertools, json, math, re, threading, time, uuid
 import miniirc, requests, traceback  # type: ignore
 
 
-ver = (0, 0, 2)
+ver = (0, 0, 3)
 __version__ = '.'.join(map(str, ver))
 
 
@@ -388,24 +388,44 @@ class Matrix(miniirc.IRC):
         self.__session.headers['Authorization'] = f'Bearer {token}'
         if auto_connect:
             self.connect()
+        else:
+            self._update_baseurl()
 
-    def _url_for(self, endpoint: str) -> str:
-        return f'https://{self.ip}:{self.port}/_matrix/client/v3/{endpoint}'
+    def _update_baseurl(self) -> None:
+        hostname = f'{self.ip}:{self.port}'
+        if (not self.ssl and self.ssl is not None and
+                self.ip in ('localhost', '127.0.0.1', '::1', '0::1')):
+            # Non-SSL localhost connections are probably to
+            # https://github.com/matrix-org/pantalaimon which doesn't support
+            # the "v3" URLs yet.
+            protocol = 'http'
+            api_version = 'r0'
+        else:
+            protocol = 'https'
+            api_version = 'v3'
+
+            # Use a shorter hostname if possible
+            if self.port == 443:
+                hostname = self.ip
+
+        matrix_url = f'{protocol}://{hostname}/_matrix'
+        self._baseurl = f'{matrix_url}/client/{api_version}'
+        self._media_baseurl = f'{matrix_url}/media/{api_version}'
 
     def __get(self, endpoint: str, timeout: int = 5, /,
               **params: Optional[str | int]) -> Any:
         self.debug('GET', endpoint, params)
-        return self.__session.get(self._url_for(endpoint), params=params,
+        return self.__session.get(f'{self._baseurl}/{endpoint}', params=params,
                                   timeout=timeout).json()
 
     def __post(self, endpoint: str, /, **params: Any) -> Any:
         self.debug('POST', endpoint, params)
-        return self.__session.post(self._url_for(endpoint), json=params,
+        return self.__session.post(f'{self._baseurl}/{endpoint}', json=params,
                                    timeout=5).json()
 
     def __put(self, endpoint: str, /, **params: Any) -> Any:
         self.debug('PUT', endpoint, params)
-        return self.__session.put(self._url_for(endpoint), json=params,
+        return self.__session.put(f'{self._baseurl}/{endpoint}', json=params,
                                   timeout=5).json()
 
     def _get_room_url_no_cache(self, room_id: str) -> str:
@@ -427,6 +447,7 @@ class Matrix(miniirc.IRC):
         if self.connected is not None:
             return
         with self._send_lock:
+            self._update_baseurl()
             self.active_caps = self.ircv3_caps & {
                 'account-tag', 'echo-message', 'message-tags',
             }
@@ -610,8 +631,7 @@ class Matrix(miniirc.IRC):
         if 'url' in content:
             msg = content.url[str]
             if msg.startswith('mxc://'):
-                msg = (f'https://{self.ip}:{self.port}/_matrix/media/v3/'
-                       f'download/{msg[6:]}')
+                msg = f'{self._media_baseurl}/download/{msg[6:]}'
         else:
             msg, html_parsed_ok = _matrix_html_to_irc(content)
 
@@ -697,7 +717,7 @@ class Matrix(miniirc.IRC):
     def _logout_all(cls, homeserver: str, username: str,
                     password: str) -> None:
         """ Logs out everywhere / voids all tokens for the user. """
-        token = cls.login(homeserver, username, password)
+        token = cls._login(homeserver, username, password)
         matrix = Matrix(homeserver, token=token, auto_connect=False)
         res = matrix.__post('logout/all')
         assert 'error' not in res, res
