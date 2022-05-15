@@ -12,7 +12,7 @@ import functools, html.parser, itertools, json, math, re, threading, time, uuid
 import miniirc, requests, traceback  # type: ignore
 
 
-ver = (0, 0, 3)
+ver = (0, 0, 4)
 __version__ = '.'.join(map(str, ver))
 
 
@@ -460,16 +460,7 @@ class Matrix(miniirc.IRC):
 
     def _main(self) -> None:
         try:
-            if miniirc.ver >= (2, 0, 0):
-                self.handle_msg(miniirc.IRCMessage('001', ('', '', ''), {}, [
-                    self.current_nick,
-                    f'Welcome to Matrix {self.current_nick}'
-                ]))
-            else:
-                self._handle('001', ('001', '001', '001'), {}, [
-                    self.current_nick,
-                    f':Welcome to Matrix {self.current_nick}'
-                ])
+            self.__numeric('001', f'Welcome to Matrix {self.current_nick}')
 
             next_batch: Optional[str] = None
             while self.connected:
@@ -578,6 +569,9 @@ class Matrix(miniirc.IRC):
             self.debug(self.__post(f'join/{_url_quote(args[0])}'))
         elif cmd == 'PART' and len(args) == 1:
             self.debug(self.__post(f'{self._get_room_url(args[0])}/leave'))
+        elif self.connected:
+            self.debug('Unknown command:', cmd)
+            self.__numeric('421', cmd, 'Unknown command')
 
     def __send_tagmsg(self, channel: str, tags: dict[Any, Any]) -> None:
         if tags.get('+draft/react') and tags.get('+draft/reply'):
@@ -604,6 +598,11 @@ class Matrix(miniirc.IRC):
             self.handle_msg(miniirc.IRCMessage(
                 command, (sender, sender, sender), tags, args
             ))
+
+        def __numeric(self, numeric: str, *args: str) -> None:
+            self.handle_msg(miniirc.IRCMessage(
+                numeric, ('', '', ''), {}, [self.current_nick, *args]
+            ))
     else:
         def __irc_msg(self, event: _Event, command: str, args: list[str],
                       tags: Optional[dict[str, str]] = None, *,
@@ -617,6 +616,11 @@ class Matrix(miniirc.IRC):
                 args[-1] = ':' + args[-1]
 
             self._handle(command, (sender, sender, sender), tags, args)
+
+        def __numeric(self, numeric: str, *args: str) -> None:
+            raw_args = [self.current_nick, *args]
+            raw_args[-1] = ':' + raw_args[-1]
+            self._handle(numeric, (numeric, numeric, numeric), {}, raw_args)
 
     @_register_event('m.room.message')
     def _message_event(self, room_id: str, event: _Event) -> None:
@@ -692,6 +696,19 @@ class Matrix(miniirc.IRC):
             '+draft/react': relates_to.key[str],
             '+draft/reply': relates_to.event_id[str]
         })
+
+    @_register_event('im.vector.modular.widgets')
+    def _widget_event(self, room_id: str, event: _Event) -> None:
+        if event.content.type == 'jitsi':
+            data = event.content.data
+            msg = (f'\x01ACTION started a video conference: https://'
+                   f'{data.domain[str]}/{data.conferenceId[str]}\x01')
+        elif event.unsigned.prev_content.type == 'jitsi':
+            msg = '\x01ACTION ended a video conference\x01'
+        else:
+            return
+
+        self.__irc_msg(event, 'PRIVMSG', [room_id, msg], {})
 
     # Helpers
     @classmethod
