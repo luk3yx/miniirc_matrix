@@ -7,12 +7,12 @@
 from __future__ import annotations
 from collections.abc import Callable
 from typing import Any, Optional, TypeVar, overload
-from urllib.parse import quote as _url_quote
+from urllib.parse import quote as _url_quote, urlparse as _urlparse
 import functools, html.parser, itertools, json, math, re, threading, time, uuid
 import miniirc, requests, traceback  # type: ignore
 
 
-ver = (0, 0, 4)
+ver = (0, 0, 5)
 __version__ = '.'.join(map(str, ver))
 
 
@@ -398,19 +398,34 @@ class Matrix(miniirc.IRC):
             # Non-SSL localhost connections are probably to
             # https://github.com/matrix-org/pantalaimon which doesn't support
             # the "v3" URLs yet.
-            protocol = 'http'
+            matrix_url = f'http://{hostname}'
             api_version = 'r0'
         else:
-            protocol = 'https'
             api_version = 'v3'
 
-            # Use a shorter hostname if possible
-            if self.port == 443:
-                hostname = self.ip
+            # Check for a .well-known/matrix/client
+            res = requests.get(f'https://{hostname}/.well-known/matrix/client',
+                               timeout=10)
+            if res.status_code == 200:
+                e = _Event(res.json())
+                baseurl = e.m_homeserver.base_url[str].rstrip('/')
 
-        matrix_url = f'{protocol}://{hostname}/_matrix'
-        self._baseurl = f'{matrix_url}/client/{api_version}'
-        self._media_baseurl = f'{matrix_url}/media/{api_version}'
+                # Ensure the baseurl is valid
+                parsed_url = _urlparse(baseurl)
+                if (parsed_url.scheme != 'https' or parsed_url.query or
+                        parsed_url.fragment):
+                    raise ValueError(f'Invalid URL {baseurl!r}')
+            elif res.status_code == 404:
+                # Use a shorter hostname if possible
+                if self.port == 443:
+                    hostname = self.ip
+                baseurl = f'https://{hostname}'
+            else:
+                res.raise_for_status()
+                raise ValueError(f'Status code {res.status_code} returned')
+
+        self._baseurl = f'{baseurl}/_matrix/client/{api_version}'
+        self._media_baseurl = f'{baseurl}/_matrix/media/{api_version}'
 
     def __get(self, endpoint: str, timeout: int = 5, /,
               **params: Optional[str | int]) -> Any:
