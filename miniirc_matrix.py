@@ -12,7 +12,7 @@ import functools, html.parser, itertools, json, math, re, threading, time, uuid
 import miniirc, requests, traceback  # type: ignore
 
 
-ver = (0, 0, 5)
+ver = (0, 0, 6)
 __version__ = '.'.join(map(str, ver))
 
 
@@ -398,7 +398,7 @@ class Matrix(miniirc.IRC):
             # Non-SSL localhost connections are probably to
             # https://github.com/matrix-org/pantalaimon which doesn't support
             # the "v3" URLs yet.
-            matrix_url = f'http://{hostname}'
+            baseurl = f'http://{hostname}'
             api_version = 'r0'
         else:
             api_version = 'v3'
