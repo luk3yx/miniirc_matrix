@@ -12,7 +12,7 @@ import functools, html.parser, itertools, json, math, re, threading, time, uuid
 import miniirc, requests, traceback  # type: ignore
 
 
-ver = (0, 0, 6)
+ver = (0, 0, 7)
 __version__ = '.'.join(map(str, ver))
 
 
@@ -520,8 +520,9 @@ class Matrix(miniirc.IRC):
     @_room_processor('join', 'leave')
     def __process_join(self, room_id: str, room: dict[str, Any]) -> None:
         # Joined rooms
-        for raw_event in room['timeline']['events']:
-            self.__fire_event(room_id, _Event(raw_event))
+        if 'timeline' in room:
+            for raw_event in room['timeline']['events']:
+                self.__fire_event(room_id, _Event(raw_event))
 
     @_room_processor('invite')
     def __process_invite(self, room_id: str, room: dict[str, Any]) -> None:
