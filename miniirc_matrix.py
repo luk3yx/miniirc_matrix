@@ -12,7 +12,7 @@ import functools, html.parser, itertools, json, math, re, threading, time, uuid
 import miniirc, requests, traceback  # type: ignore
 
 
-ver = (0, 0, 7)
+ver = (0, 0, 8)
 __version__ = '.'.join(map(str, ver))
 
 
@@ -495,6 +495,14 @@ class Matrix(miniirc.IRC):
                 if self.debug_file:
                     self.debug(json.dumps(res, indent=4))
                 if 'error' in res:
+                    # TODO: Use self.debug or something
+                    print(f'[miniirc_matrix] Error returned when trying to '
+                          f'fetch /sync: {res["error"]!r}')
+
+                    if self.persist:
+                        self.debug('Trying again in 15 seconds...')
+                        time.sleep(15)
+                        continue
                     break
                 next_batch = res['next_batch']
                 if 'rooms' in res:
