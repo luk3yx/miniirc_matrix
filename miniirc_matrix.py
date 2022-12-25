@@ -8,11 +8,11 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any, Optional, TypeVar, overload
 from urllib.parse import quote as _url_quote, urlparse as _urlparse
-import functools, html.parser, itertools, json, math, re, threading, time, uuid
+import functools, html.parser, itertools, json, math, re, time, uuid
 import miniirc, requests, traceback  # type: ignore
 
 
-ver = (0, 0, 8)
+ver = (0, 0, 9)
 __version__ = '.'.join(map(str, ver))
 
 
@@ -257,7 +257,9 @@ class _MatrixHTMLParser(html.parser.HTMLParser):
             if tag in ('mx-reply', 'script'):
                 self.in_reply -= 1
             return
-        if tag in self.irc_codes:
+        if tag == 'br':
+            return
+        elif tag in self.irc_codes:
             self.text.append(self.irc_codes[tag])
         elif tag != 'font':
             raise _UnknownTagError(tag)
