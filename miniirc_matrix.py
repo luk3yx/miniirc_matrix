@@ -12,7 +12,7 @@ import functools, html.parser, itertools, json, math, re, time, uuid
 import miniirc, requests, traceback  # type: ignore
 
 
-ver = (0, 0, 9)
+ver = (0, 0, 10)
 __version__ = '.'.join(map(str, ver))
 
 
@@ -480,8 +480,8 @@ class Matrix(miniirc.IRC):
             self.__numeric('001', f'Welcome to Matrix {self.current_nick}')
 
             next_batch: Optional[str] = None
+            self.connected = True
             while self.connected:
-                req_time = time.monotonic()
                 try:
                     res = self.__get('sync', 35, timeout='30000',
                                      since=next_batch)
