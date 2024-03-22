@@ -12,7 +12,7 @@ import functools, html.parser, itertools, json, math, re, time, uuid
 import miniirc, requests, traceback  # type: ignore
 
 
-ver = (0, 0, 10)
+ver = (0, 0, 11)
 __version__ = '.'.join(map(str, ver))
 
 
@@ -234,6 +234,8 @@ class _MatrixHTMLParser(html.parser.HTMLParser):
     irc_codes['b'] = irc_codes['strong']
     irc_codes['i'] = irc_codes['em']
     irc_codes['br'] = '\n'
+    irc_codes['s'] = irc_codes['del']
+    irc_codes['strike'] = irc_codes['del']
 
     def __init__(self) -> None:
         super().__init__()
