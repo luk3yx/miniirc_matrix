@@ -74,8 +74,9 @@ To expose this to the public, you must use a reverse proxy, and should set up
 caching and some kind of rate limiting to prevent abuse. You can set the
 `media_proxy_url` keyword argument to the public proxy URL.
 
-A HMAC is created based on the API token and URL to prevent using the proxy to
-fetch arbitrary attachment URLs.
+A HMAC is created based on a random key and URL to prevent using the proxy to
+fetch arbitrary attachment URLs. To make this value consistent across restarts,
+pass a bytes value to the `media_proxy_key` keyword argument.
 
 ## Installation
 

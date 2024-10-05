@@ -9,11 +9,11 @@ from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Optional, TypeVar, overload
 from urllib.parse import quote as _url_quote, urlparse as _urlparse
-import functools, hmac, html.parser, itertools, json, math, re, time, uuid
+import functools, hmac, html.parser, itertools, json, math, os, re, time, uuid
 import miniirc, requests, threading, traceback  # type: ignore
 
 
-ver = (0, 0, 12)
+ver = (0, 0, 13)
 __version__ = '.'.join(map(str, ver))
 
 
@@ -440,6 +440,7 @@ class Matrix(miniirc.IRC):
             token: Optional[str] = None,
             media_proxy_port: Optional[int] = None,
             media_proxy_url: Optional[str] = None,
+            media_proxy_key: Optional[bytes] = None,
             **kwargs
     ) -> None:
         # Cache _get_room_url
@@ -463,9 +464,11 @@ class Matrix(miniirc.IRC):
 
         self._media_proxy: Optional[ThreadingHTTPServer] = None
         self._media_proxy_port = media_proxy_port
-        if media_proxy_port and not media_proxy_port:
+        if media_proxy_port and not media_proxy_url:
             media_proxy_url = f'http://127.0.0.1:{media_proxy_port}'
         self._media_proxy_url = media_proxy_url and media_proxy_url.rstrip('/')
+        if media_proxy_port is not None:
+            self._media_proxy_key = media_proxy_key or os.urandom(32)
 
         # Stop miniirc from trying to access the (non-existent) socket
         kwargs['ping_interval'] = kwargs['ping_timeout'] = None
@@ -541,11 +544,8 @@ class Matrix(miniirc.IRC):
         return f'rooms/{_url_quote(room_id)}'
 
     def __make_url_digest(self, path: str) -> str:
-        return hmac.digest(
-            b'miniirc_matrix hmac v1 ' + self.token.encode('ascii'),
-            path.encode('ascii'),
-            'sha256'
-        ).hex()
+        return hmac.digest(self._media_proxy_key, path.encode('ascii'),
+                           'sha256').hex()
 
     def _download_media(self, url: str) -> requests.Response:
         url_base, _, key = url.partition('?key=')
