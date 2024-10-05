@@ -45,10 +45,21 @@ def _register_event(event_name: str):
     return _register
 
 
-_formatting_re = re.compile(
+_invisible_formatting_re = re.compile(
     r'\x02|\x1d|\x1f|\x1e|\x11|\x16|\x0f'
     r'|\x03([0-9]{1,2})?(?:,([0-9]{1,2}))?'
+
+    # Hex colours
     r'|\x04([0-9a-fA-F]{6})?(?:,([0-9a-fA-F]{6}))?'
+)
+
+_full_formatting_re = re.compile(
+    _invisible_formatting_re.pattern +
+
+    # Matrix mentions
+    # These currently get inserted without any escaping, if HTML characters get
+    # added to the regex then make sure escaping gets added
+    r'|\B@[a-z0-9\._=\-/+]+:[a-zA-Z0-9_\-\.]+\.[a-zA-Z]{2,}(?!\.\w)\b'
 )
 _html_tags = {'\x02': 'strong', '\x1d': 'em', '\x1f': 'u', '\x1e': 'del',
               '\x11': 'code'}
@@ -86,9 +97,15 @@ class _TagManager:
             self.write_tags()
             self.text.append(s)
 
+    @staticmethod
+    def _encode_attribute(param: str) -> str:
+        if param == 'href':
+            return param
+        return 'data-mx-' + param.replace('_', '-')
+
     def open(self, tag: str, **kwargs: Optional[str]) -> None:
         self.tags[tag] = ''.join(
-            f' data-mx-{param.replace("_", "-")}="{value}"'
+            f' {self._encode_attribute(param)}="{value}"'
             for param, value in kwargs.items() if value is not None
         )
 
@@ -167,20 +184,21 @@ def _irc_colour_to_hex(code: Optional[str]) -> Optional[str]:
         return ''
 
 
-def _irc_to_html(irc_msg: str) -> Optional[str]:
+def _irc_to_html(irc_msg: str) -> tuple[Optional[str], set[str]]:
     """
     Converts IRC formatting to Matrix HTML. Returns None if the message
     contains no formatting.
     """
+    mentions: set[str] = set()
 
     # Escaping quotes seems to make matrix-appservice-discord do strange things
     irc_msg = html.escape(irc_msg, quote=False)
 
     # If there is no formatting return immediately
-    it = _formatting_re.finditer(irc_msg)
+    it = _full_formatting_re.finditer(irc_msg)
     first_match = next(it, None)
     if first_match is None:
-        return None
+        return None, mentions
 
     tags = _TagManager()
     prev_end = start = 0
@@ -212,12 +230,20 @@ def _irc_to_html(irc_msg: str) -> Optional[str]:
         elif char == '\x0f':
             tags.fg = tags.bg = None
             tags.tags.clear()
+        elif char == '@':
+            # Matrix mention
+            mention = match.group(0)
+            tags.open('a', href=f'https://matrix.to/#/{mention}')
+            tags.write(mention)
+            tags.close('a')
+            mentions.add(mention)
+
         prev_end = match.end()
 
     tags.write(irc_msg[prev_end:])
     tags.tags.clear()
     tags.write_tags()
-    return ''.join(tags.text).replace('\n', '<br>')
+    return ''.join(tags.text).replace('\n', '<br>'), mentions
 
 
 # This simple space collapsing regex "collapses" newlines as well
@@ -570,13 +596,16 @@ class Matrix(miniirc.IRC):
                 msgtype = 'm.text'
 
             params: dict[str, Any]
-            if html_msg := _irc_to_html(msg):
+            html_msg, mentions = _irc_to_html(msg)
+            if html_msg:
                 params = {
                     'msgtype': msgtype,
-                    'body': _formatting_re.sub('', msg),
+                    'body': _invisible_formatting_re.sub('', msg),
                     'format': 'org.matrix.custom.html',
                     'formatted_body': html_msg,
                 }
+                if mentions:
+                    params['m.mentions'] = {'user_ids': list(mentions)}
             else:
                 # No formatting
                 params = {'msgtype': msgtype, 'body': msg}
