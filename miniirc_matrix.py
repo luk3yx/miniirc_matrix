@@ -6,13 +6,14 @@
 
 from __future__ import annotations
 from collections.abc import Callable
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Optional, TypeVar, overload
 from urllib.parse import quote as _url_quote, urlparse as _urlparse
-import functools, html.parser, itertools, json, math, re, time, uuid
-import miniirc, requests, traceback  # type: ignore
+import functools, hmac, html.parser, itertools, json, math, re, time, uuid
+import miniirc, requests, threading, traceback  # type: ignore
 
 
-ver = (0, 0, 11)
+ver = (0, 0, 12)
 __version__ = '.'.join(map(str, ver))
 
 
@@ -52,7 +53,6 @@ _invisible_formatting_re = re.compile(
     # Hex colours
     r'|\x04([0-9a-fA-F]{6})?(?:,([0-9a-fA-F]{6}))?'
 )
-
 _full_formatting_re = re.compile(
     _invisible_formatting_re.pattern +
 
@@ -63,6 +63,9 @@ _full_formatting_re = re.compile(
 )
 _html_tags = {'\x02': 'strong', '\x1d': 'em', '\x1f': 'u', '\x1e': 'del',
               '\x11': 'code'}
+_media_url_re = re.compile(
+    r'^mxc://([A-Za-z0-9_\-\.]+/[A-Za-z0-9_\-\.]+)(?:/(.*))?$'
+)
 
 
 class _TagManager:
@@ -311,6 +314,48 @@ def _matrix_html_to_irc(content: _Event) -> tuple[str, bool]:
     return content.body[str], False
 
 
+class _MediaProxyHandler(BaseHTTPRequestHandler):
+    irc: Matrix
+
+    def do_GET(self) -> None:
+        try:
+            with self.irc._download_media('mxc:/' + self.path) as resp:
+                if resp.status_code != 200:
+                    self.send_error(resp.status_code)
+                    return
+
+                self.send_response(200)
+                self.send_header('X-Content-Type-Options', 'nosniff')
+                self.send_header('Content-Security-Policy',
+                                 "default-src 'none'")
+
+                if 'Content-Length' in resp.headers:
+                    self.send_header('Content-Length',
+                                     resp.headers['Content-Length'])
+
+                # Only allow probably safe content types
+                content_type = resp.headers.get('Content-Type', '')
+                if (content_type.startswith(('image/', 'audio/', 'video/')) or
+                        content_type == 'text/plain'):
+                    self.send_header('Content-Type', content_type)
+                else:
+                    self.send_header('Content-Type',
+                                     'application/octet-stream')
+
+                self.end_headers()
+
+                # Copy content
+                for chunk in resp.iter_content(8192):
+                    self.wfile.write(chunk)
+        except ValueError as exc:
+            self.send_error(400, explain=str(exc))
+            return
+
+    def log_message(self, format: str, *args) -> None:
+        if self.irc.debug:
+            super().log_message(format, *args)
+
+
 class _InvalidEventError(Exception):
     pass
 
@@ -389,9 +434,14 @@ class Matrix(miniirc.IRC):
     connected: Optional[bool]
     msglen = 4096
 
-    def __init__(self, ip: str, port: int = 0, nick: str = '', *args,
-                 auto_connect: bool = True,
-                 token: Optional[str] = None, **kwargs):
+    def __init__(
+            self, ip: str, port: int = 0, nick: str = '', *args,
+            auto_connect: bool = True,
+            token: Optional[str] = None,
+            media_proxy_port: Optional[int] = None,
+            media_proxy_url: Optional[str] = None,
+            **kwargs
+    ) -> None:
         # Cache _get_room_url
         # This is done here so that each class instance gets its own cache and
         # the cache doesn't store class instances.
@@ -410,6 +460,12 @@ class Matrix(miniirc.IRC):
 
         if token:
             self.token = token
+
+        self._media_proxy: Optional[ThreadingHTTPServer] = None
+        self._media_proxy_port = media_proxy_port
+        if media_proxy_port and not media_proxy_port:
+            media_proxy_url = f'http://127.0.0.1:{media_proxy_port}'
+        self._media_proxy_url = media_proxy_url and media_proxy_url.rstrip('/')
 
         # Stop miniirc from trying to access the (non-existent) socket
         kwargs['ping_interval'] = kwargs['ping_timeout'] = None
@@ -455,7 +511,7 @@ class Matrix(miniirc.IRC):
                 raise ValueError(f'Status code {res.status_code} returned')
 
         self._baseurl = f'{baseurl}/_matrix/client/{api_version}'
-        self._media_baseurl = f'{baseurl}/_matrix/media/{api_version}'
+        self._media_baseurl = f'{baseurl}/_matrix/client/v1/media'
 
     def __get(self, endpoint: str, timeout: int = 5, /,
               **params: Optional[str | int]) -> Any:
@@ -484,6 +540,26 @@ class Matrix(miniirc.IRC):
 
         return f'rooms/{_url_quote(room_id)}'
 
+    def __make_url_digest(self, path: str) -> str:
+        return hmac.digest(
+            b'miniirc_matrix hmac v1 ' + self.token.encode('ascii'),
+            path.encode('ascii'),
+            'sha256'
+        ).hex()
+
+    def _download_media(self, url: str) -> requests.Response:
+        url_base, _, key = url.partition('?key=')
+        match = _media_url_re.match(url_base)
+        if not match:
+            raise ValueError('Invalid media URL')
+
+        path = match.group(1)
+        if not hmac.compare_digest(self.__make_url_digest(path), key):
+            raise ValueError('Invalid key parameter')
+
+        return self.__session.get(f'{self._media_baseurl}/download/{path}',
+                                  timeout=15, stream=True)
+
     @functools.cached_property
     def current_nick(self) -> str:
         return self.__get('account/whoami')['user_id']
@@ -492,6 +568,7 @@ class Matrix(miniirc.IRC):
         if self.connected is not None:
             return
         with self._send_lock:
+            self.connected = False
             self._update_baseurl()
             self.active_caps = self.ircv3_caps & {
                 'account-tag', 'echo-message', 'message-tags',
@@ -500,8 +577,26 @@ class Matrix(miniirc.IRC):
             self.debug('Starting main loop (Matrix)')
             self._start_main_loop()
 
+            if self._media_proxy_port:
+                self.debug('Starting media proxy')
+
+                class _handler(_MediaProxyHandler):
+                    irc = self
+
+                self._media_proxy = ThreadingHTTPServer(
+                    ('127.0.0.1', self._media_proxy_port),
+                    _handler,
+                )
+                th = threading.Thread(target=self._media_proxy.serve_forever)
+                th.daemon = True
+                th.start()
+
     def disconnect(self) -> None:
-        self.connected = False
+        with self._send_lock:
+            self.connected = False
+            if self._media_proxy is not None:
+                self._media_proxy.shutdown()
+                self._media_proxy = None
 
     def _main(self) -> None:
         try:
@@ -691,8 +786,10 @@ class Matrix(miniirc.IRC):
         msg: str
         if 'url' in content:
             msg = content.url[str]
-            if msg.startswith('mxc://'):
-                msg = f'{self._media_baseurl}/download/{msg[6:]}'
+            if self._media_proxy_url and (match := _media_url_re.match(msg)):
+                path = match.group(1)
+                key = self.__make_url_digest(path)
+                msg = f'{self._media_proxy_url}/{path}?key={key}'
         else:
             msg, html_parsed_ok = _matrix_html_to_irc(content)
 

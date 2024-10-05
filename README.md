@@ -48,6 +48,35 @@ and `PART` commands should work as expected.
 Note that events sent before the client connects to Matrix are ignored. Your
 system must have an accurate clock for this to work properly.
 
+## Downloading media
+
+Matrix has recently started to require authentication for media endpoints. By
+default, miniirc_matrix now translates media files into MXC URLs. It does,
+however, have a built-in HTTP proxy (disabled by default, see below).
+
+### Proxying requests (experimental)
+
+**Warning: I don't know how secure this is, it uses Python's `http.server`**
+
+If you want to convert media to a normal URL, for example for use with relay
+bots or code that expects normal links, you can provide a `media_proxy_port`
+argument to miniirc_matrix.Matrix.
+
+```py
+miniirc_matrix.Matrix('example.com', token='my_token',
+                      media_proxy_port=8080)
+```
+
+This will start a HTTP server on `http://127.0.0.1:8080` to listen for ports.
+The server only listens on localhost.
+
+To expose this to the public, you must use a reverse proxy, and should set up
+caching and some kind of rate limiting to prevent abuse. You can set the
+`media_proxy_url` keyword argument to the public proxy URL.
+
+A HMAC is created based on the API token and URL to prevent using the proxy to
+fetch arbitrary attachment URLs.
+
 ## Installation
 
 You can install `miniirc_matrix` with `pip install miniirc_matrix`.
